@@ -1,0 +1,45 @@
+{
+  "group_id": null,
+  "states": [
+    {
+      "character": {
+        "id": "9ebf4b7d-ed7e-4873-af1a-0c5aff116d58",
+        "name": "pixel art character sprite sheet, Atari 2600 style, minimal blocky black figure, \nsimple humanoid (head, body, legs), solid silhouette, no facial details, \nlow resolution, chunky pixels, side view, \ntransparent background",
+        "prompt": "pixel art character sprite sheet, Atari 2600 style, minimal blocky black figure, \nsimple humanoid (head, body, legs), solid silhouette, no facial details, \nlow resolution, chunky pixels, side view, \ntransparent background",
+        "size": {
+          "width": 92,
+          "height": 92
+        },
+        "template_id": "mannequin",
+        "directions": 4,
+        "view": "side",
+        "created_at": "2026-06-30T00:16:08.555149+00:00"
+      },
+      "folder": "pixel_art_character_sprite_sheet_Atari_2600_style",
+      "frames": {
+        "rotations": {
+          "south": "pixel_art_character_sprite_sheet_Atari_2600_style/rotations/south.png",
+          "west": "pixel_art_character_sprite_sheet_Atari_2600_style/rotations/west.png",
+          "east": "pixel_art_character_sprite_sheet_Atari_2600_style/rotations/east.png",
+          "north": "pixel_art_character_sprite_sheet_Atari_2600_style/rotations/north.png"
+        },
+        "animations": {
+          "Walking": {
+            "east": [
+              "pixel_art_character_sprite_sheet_Atari_2600_style/animations/Walking/east/frame_000.png",
+              "pixel_art_character_sprite_sheet_Atari_2600_style/animations/Walking/east/frame_001.png",
+              "pixel_art_character_sprite_sheet_Atari_2600_style/animations/Walking/east/frame_002.png",
+              "pixel_art_character_sprite_sheet_Atari_2600_style/animations/Walking/east/frame_003.png",
+              "pixel_art_character_sprite_sheet_Atari_2600_style/animations/Walking/east/frame_004.png",
+              "pixel_art_character_sprite_sheet_Atari_2600_style/animations/Walking/east/frame_005.png",
+              "pixel_art_character_sprite_sheet_Atari_2600_style/animations/Walking/east/frame_006.png",
+              "pixel_art_character_sprite_sheet_Atari_2600_style/animations/Walking/east/frame_007.png"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "export_version": "3.0",
+  "export_date": "2026-06-30T00:22:50.887182"
+}
