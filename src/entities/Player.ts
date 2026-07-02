@@ -1,3 +1,5 @@
+import type { TouchInput } from '../systems/TouchControls';
+
 type GroundState = 'idle' | 'walk' | 'run';
 type AirAnim = 'jump' | 'run_jump';
 type State = GroundState | AirAnim | 'crouch' | 'attack';
@@ -116,10 +118,15 @@ export class Player {
 
   private platforms: Platform[];
   private worldW: number;
+  private touch: TouchInput | null;
 
-  constructor(scene: Phaser.Scene, x: number, feetY: number, platforms: Platform[], worldW: number, color: number) {
+  constructor(
+    scene: Phaser.Scene, x: number, feetY: number, platforms: Platform[], worldW: number, color: number,
+    touch: TouchInput | null = null,
+  ) {
     this.platforms = platforms;
     this.worldW = worldW;
+    this.touch = touch;
     // 외곽선(메인 뒤) → 메인 순서로 생성, depth로 뒤에 배치
     const dark = darken(color, OUTLINE_DARKEN);
     for (let i = 0; i < OUTLINE_OFFSETS.length; i++) {
@@ -147,9 +154,9 @@ export class Player {
 
   update(delta: number): void {
     const dt      = delta / 1000;
-    const goRight = this.cursors.right.isDown;
-    const goLeft  = this.cursors.left.isDown;
-    const running = this.shiftKey.isDown;
+    const goRight = this.cursors.right.isDown || (this.touch?.right ?? false);
+    const goLeft  = this.cursors.left.isDown || (this.touch?.left ?? false);
+    const running = this.shiftKey.isDown || (this.touch?.running ?? false);
     const maxSpd  = running ? RUN_SPEED : WALK_SPEED;
 
     if (this.attackTimer > 0) this.attackTimer -= dt;
@@ -173,7 +180,8 @@ export class Player {
     }
 
     // 점프 입력 → 윈드업 예약 (점프 종류는 입력 순간에 결정, 펀치 중엔 불가)
-    if (Phaser.Input.Keyboard.JustDown(this.cursors.space) && this.onGround && this.pendingJump === null && this.attackTimer <= 0) {
+    const jumpPressed = Phaser.Input.Keyboard.JustDown(this.cursors.space) || (this.touch?.consumeJump() ?? false);
+    if (jumpPressed && this.onGround && this.pendingJump === null && this.attackTimer <= 0) {
       this.pendingJump = running && Math.abs(this.vx) > 1 ? 'run_jump' : 'jump';
       this.crouchTimer = JUMP_ANTICIPATION;
     }

@@ -3,6 +3,7 @@ import { Player } from '../entities/Player';
 import { Dummy } from '../entities/Dummy';
 import { MovingPlatform } from '../entities/MovingPlatform';
 import { CameraController } from '../systems/CameraController';
+import { TouchControls } from '../systems/TouchControls';
 import { GRID, loadLevel, deriveSurfaces, worldW, worldH, type LevelData } from '../level/LevelData';
 
 interface Trap { x: number; y: number; w: number; h: number; }
@@ -33,6 +34,7 @@ export class GameScene extends Phaser.Scene {
   private player!: Player;
   private dummy!: Dummy;
   private camCtl!: CameraController;
+  private touchControls!: TouchControls;
   private hitParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
   private hitStop = 0;
   private comboCount = 0;
@@ -105,7 +107,14 @@ export class GameScene extends Phaser.Scene {
 
     const surfaces = deriveSurfaces(this.level);
     const playerSurfaces = [...surfaces, ...this.movingPlatforms.map((m) => m.surface)];
-    this.player = new Player(this, spawnX, spawnY, playerSurfaces, this.wWidth, PALETTE[this.colorIndex]);
+    this.touchControls = new TouchControls(
+      this,
+      () => this.player.attackWith('jab'),
+      () => this.player.attackWith('cross'),
+    );
+    this.player = new Player(
+      this, spawnX, spawnY, playerSurfaces, this.wWidth, PALETTE[this.colorIndex], this.touchControls,
+    );
     this.dummy = new Dummy(this, spawnX + 90, spawnY, surfaces, this.wWidth, this.wHeight);
 
     // 충돌 파티클
@@ -212,6 +221,7 @@ export class GameScene extends Phaser.Scene {
 
   private win(): void {
     this.won = true;
+    this.touchControls.setVisible(false);
     this.camCtl.shake(0.25, 6);
     this.hitParticles.setParticleTint(0xffd24a);
     this.hitParticles.explode(40, this.player.x, this.player.focusY);

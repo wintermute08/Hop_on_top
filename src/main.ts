@@ -9,6 +9,9 @@ const config: Phaser.Types.Core.GameConfig = {
   backgroundColor: '#1a1a2e',
   pixelArt: true,
   disableContextMenu: true, // 우클릭(지우개) 시 메뉴 방지
+  input: {
+    activePointers: 3, // 이동 조이스틱 + 점프/공격 버튼 동시 터치
+  },
   scale: {
     mode: Phaser.Scale.FIT,            // 비율 유지하며 창에 꽉 차게
     autoCenter: Phaser.Scale.CENTER_BOTH,
