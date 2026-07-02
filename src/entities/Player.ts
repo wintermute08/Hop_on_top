@@ -97,6 +97,7 @@ function darken(c: number, f: number): number {
 }
 
 export class Player {
+  private scene: Phaser.Scene;
   private sprite: Phaser.GameObjects.Sprite;
   private outline: Phaser.GameObjects.Sprite[] = [];
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -115,6 +116,7 @@ export class Player {
   private attack: AttackDef | null = null;      // 진행 중인 공격 정의
   private attackTimer = 0;                       // 남은 공격 모션 시간(초)
   private attackHasHit = false;                  // 이번 공격으로 이미 명중했는지
+  private squash = 0;                            // 스쿼시&스트레치: +늘어남 / -찌부러짐, 0으로 감쇠
 
   private platforms: Platform[];
   private worldW: number;
@@ -124,6 +126,7 @@ export class Player {
     scene: Phaser.Scene, x: number, feetY: number, platforms: Platform[], worldW: number, color: number,
     touch: TouchInput | null = null,
   ) {
+    this.scene = scene;
     this.platforms = platforms;
     this.worldW = worldW;
     this.touch = touch;
@@ -194,6 +197,8 @@ export class Player {
         this.onGround = false;
         this.airAnim = this.pendingJump;
         this.pendingJump = null;
+        this.squash = 0.22; // 도약 순간 세로로 쭉 늘어남
+        this.scene.events.emit('player-jump');
       }
     }
 
@@ -213,7 +218,11 @@ export class Player {
       if (surf !== null) {
         newY = surf.y;
         this.vy = 0;
-        if (!this.onGround) this.justLanded = true;
+        if (!this.onGround) {
+          this.justLanded = true;
+          this.squash = -0.26; // 착지 순간 납작하게
+          this.scene.events.emit('player-land', this.sprite.x, surf.y);
+        }
         this.onGround = true;
         this.ground = surf;
       } else {
@@ -225,6 +234,10 @@ export class Player {
       this.ground = null;
     }
     this.sprite.y = newY;
+
+    // 스쿼시&스트레치 — 0으로 지수 감쇠, 발(origin) 기준이라 발이 땅에 붙은 채 변형
+    this.squash *= Math.exp(-11 * dt);
+    this.sprite.setScale(1 - this.squash * 0.7, 1 + this.squash);
 
     this.updateState(running);
     this.syncOutline();
@@ -238,6 +251,7 @@ export class Player {
       o.setTexture(key);
       o.setFlipX(this.sprite.flipX);
       o.setOrigin(0.5, this.sprite.originY);
+      o.setScale(this.sprite.scaleX, this.sprite.scaleY);
       o.setPosition(this.sprite.x + OUTLINE_OFFSETS[i][0], this.sprite.y + OUTLINE_OFFSETS[i][1]);
     }
   }
@@ -337,12 +351,13 @@ export class Player {
 
   // ── 공격 (크로스 펀치 / 레프트 잽) ──
 
-  /** 공격 시작 (진행 중이면 무시) */
-  attackWith(type: AttackType): void {
-    if (this.attackTimer > 0) return;
+  /** 공격 시작 (진행 중이면 무시). 실제로 시작됐으면 true */
+  attackWith(type: AttackType): boolean {
+    if (this.attackTimer > 0) return false;
     this.attack = ATTACKS[type];
     this.attackTimer = this.attack.duration;
     this.attackHasHit = false;
+    return true;
   }
 
   /** 바라보는 방향: 오른쪽 +1, 왼쪽 -1 */
@@ -397,5 +412,7 @@ export class Player {
     this.vx = 0; this.vy = 0;
     this.onGround = false; this.ground = null;
     this.attackTimer = 0; this.pendingJump = null; this.crouchTimer = 0;
+    this.squash = 0;
+    this.sprite.setScale(1, 1);
   }
 }

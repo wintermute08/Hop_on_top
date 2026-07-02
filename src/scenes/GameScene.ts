@@ -4,14 +4,17 @@ import { Dummy } from '../entities/Dummy';
 import { MovingPlatform } from '../entities/MovingPlatform';
 import { CameraController } from '../systems/CameraController';
 import { TouchControls } from '../systems/TouchControls';
+import { Background } from '../systems/Background';
+import { sfx } from '../systems/Sfx';
 import { GRID, loadLevel, deriveSurfaces, worldW, worldH, type LevelData } from '../level/LevelData';
 
 interface Trap { x: number; y: number; w: number; h: number; }
 
 const COMBO_WINDOW = 1.2;
 const PLAT_VIS_H = GRID;
-const BLOCK_FILL = 0x6f7e93;
-const BLOCK_EDGE = 0x3c4654;
+const BLOCK_FILL = '#6f7e93';
+const BLOCK_EDGE = '#39424f';
+const RUN_DUST_INTERVAL = 0.13;
 const PALETTE = [0xe0a0d8, 0xe08585, 0x8fb8e8, 0xa8d8a0, 0xe8d888, 0xe8b088];
 
 /** 검은 실루엣 텍스처를 흰색으로 변환 — tint(곱셈)로 어떤 색이든 입힐 수 있게 */
@@ -36,6 +39,8 @@ export class GameScene extends Phaser.Scene {
   private camCtl!: CameraController;
   private touchControls!: TouchControls;
   private hitParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private dustParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private runDustTimer = 0;
   private hitStop = 0;
   private comboCount = 0;
   private comboTimer = 0;
@@ -79,10 +84,10 @@ export class GameScene extends Phaser.Scene {
     this.wWidth = worldW(this.level);
     this.wHeight = worldH(this.level);
 
-    // 배경
-    this.add.rectangle(this.wWidth / 2, this.wHeight / 2, this.wWidth, this.wHeight, 0xffffff);
+    // 배경 (그라데이션 하늘 + 패럴랙스 구름/능선)
+    new Background(this, this.wWidth, this.wHeight);
 
-    // 솔리드 블록 렌더 (사각형 + 테두리)
+    // 솔리드 블록 렌더 (텍스처 타일, 노출면에만 테두리)
     this.renderBlocks();
 
     // 이동 발판
@@ -109,8 +114,8 @@ export class GameScene extends Phaser.Scene {
     const playerSurfaces = [...surfaces, ...this.movingPlatforms.map((m) => m.surface)];
     this.touchControls = new TouchControls(
       this,
-      () => this.player.attackWith('jab'),
-      () => this.player.attackWith('cross'),
+      () => { if (this.player.attackWith('jab')) sfx.swing(); },
+      () => { if (this.player.attackWith('cross')) sfx.swing(); },
     );
     this.player = new Player(
       this, spawnX, spawnY, playerSurfaces, this.wWidth, PALETTE[this.colorIndex], this.touchControls,
@@ -121,6 +126,9 @@ export class GameScene extends Phaser.Scene {
     const g = this.make.graphics({ x: 0, y: 0 });
     g.fillStyle(0xffffff).fillRect(0, 0, 6, 6);
     g.generateTexture('spark', 6, 6);
+    g.clear();
+    g.fillStyle(0xffffff, 1).fillCircle(4, 4, 4);
+    g.generateTexture('dust', 8, 8);
     g.destroy();
     this.hitParticles = this.add.particles(0, 0, 'spark', {
       speed: { min: 90, max: 240 }, lifespan: 320,
@@ -128,9 +136,35 @@ export class GameScene extends Phaser.Scene {
     });
     this.hitParticles.setDepth(500);
 
+    // 먼지 파티클 (착지/달리기) — 옆으로 퍼지며 살짝 떠오르는 부드러운 퍼프
+    this.dustParticles = this.add.particles(0, 0, 'dust', {
+      speed: { min: 15, max: 60 }, lifespan: { min: 280, max: 450 },
+      scale: { start: 0.9, end: 0 }, alpha: { start: 0.7, end: 0 },
+      angle: { min: 200, max: 340 }, gravityY: -30,
+      tint: 0xcdd6e0, emitting: false,
+    });
+    this.dustParticles.setDepth(400);
+
+    // 플레이어 모션 이벤트 → 먼지 + 사운드
+    this.events.on('player-land', this.onPlayerLand, this);
+    this.events.on('player-jump', this.onPlayerJump, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.events.off('player-land', this.onPlayerLand, this);
+      this.events.off('player-jump', this.onPlayerJump, this);
+    });
+
+    // 사운드 unlock(브라우저 정책상 첫 입력 필요) — 이후 BGM 자동 시작
+    this.input.once('pointerdown', () => sfx.unlock());
+    this.input.keyboard!.once('keydown', () => sfx.unlock());
+
     // 카메라
     this.cameras.main.setBounds(0, 0, this.wWidth, this.wHeight);
     this.camCtl = new CameraController(this, this.player);
+
+    // 은은한 비네트 (WebGL에서만)
+    try {
+      this.cameras.main.postFX?.addVignette(0.5, 0.5, 0.95, 0.3);
+    } catch { /* Canvas 렌더러 등 미지원 환경 무시 */ }
 
     // HUD
     this.add.text(8, 8,
@@ -138,9 +172,22 @@ export class GameScene extends Phaser.Scene {
       { fontSize: '11px', color: '#333333', fontFamily: 'monospace' },
     ).setScrollFactor(0).setDepth(1000);
 
+    // 음소거 토글 (설정은 localStorage에 유지)
+    const muteBtn = this.add.text(this.scale.width - 10, 6, sfx.muted ? '🔇' : '🔊', {
+      fontSize: '16px',
+    }).setOrigin(1, 0).setScrollFactor(0).setDepth(2000).setInteractive({ useHandCursor: true });
+    muteBtn.on('pointerdown', () => {
+      sfx.unlock();
+      muteBtn.setText(sfx.toggleMute() ? '🔇' : '🔊');
+    });
+
     // 입력
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.Z).on('down', () => this.player.attackWith('cross'));
-    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.X).on('down', () => this.player.attackWith('jab'));
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.Z).on('down', () => {
+      if (this.player.attackWith('cross')) sfx.swing();
+    });
+    this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.X).on('down', () => {
+      if (this.player.attackWith('jab')) sfx.swing();
+    });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.C).on('down', () => {
       this.colorIndex = (this.colorIndex + 1) % PALETTE.length;
       this.player.setColor(PALETTE[this.colorIndex]);
@@ -149,22 +196,69 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.M).on('down', () => this.scene.start('MenuScene'));
   }
 
-  /** 솔리드 칸을 사각 블록으로 그림 (한 Graphics에 일괄) */
+  /**
+   * 솔리드 칸을 하나의 캔버스 레이어로 렌더.
+   * 셀마다 노이즈 스페클을 얹고, 이웃이 비어 '노출된' 면에만 라이팅(위=밝게,
+   * 아래=그림자)과 외곽선을 그려 붙은 블록이 한 덩어리 지형으로 보이게 한다.
+   */
   private renderBlocks(): void {
     const { cols, rows, solid } = this.level;
-    const g = this.add.graphics().setDepth(1);
+    const at = (c: number, r: number) =>
+      c >= 0 && c < cols && r >= 0 && r < rows && solid[r * cols + c];
+
+    const canvas = document.createElement('canvas');
+    canvas.width = this.wWidth;
+    canvas.height = this.wHeight;
+    const ctx = canvas.getContext('2d')!;
+
+    let seed = 3;
+    const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         if (!solid[r * cols + c]) continue;
         const x = c * GRID, y = r * GRID;
-        g.fillStyle(BLOCK_FILL, 1).fillRect(x, y, GRID, GRID);
-        g.lineStyle(2, BLOCK_EDGE, 1).strokeRect(x, y, GRID, GRID);
-        // 윗면이 노출된 칸엔 밝은 모서리
-        if (r === 0 || !solid[(r - 1) * cols + c]) {
-          g.fillStyle(0xaeb8c6, 1).fillRect(x, y, GRID, 3);
+
+        ctx.fillStyle = BLOCK_FILL;
+        ctx.fillRect(x, y, GRID, GRID);
+
+        // 돌 질감 스페클
+        for (let i = 0; i < 9; i++) {
+          ctx.fillStyle = rand() < 0.5 ? 'rgba(58,68,88,0.20)' : 'rgba(216,226,240,0.14)';
+          const sw = rand() < 0.3 ? 3 : 2;
+          ctx.fillRect(x + 2 + Math.floor(rand() * (GRID - 6)), y + 2 + Math.floor(rand() * (GRID - 6)), sw, 2);
         }
+
+        // 노출면 라이팅
+        if (!at(c, r - 1)) {
+          ctx.fillStyle = '#aeb8c6';
+          ctx.fillRect(x, y, GRID, 4);
+        }
+        if (!at(c, r + 1)) {
+          ctx.fillStyle = 'rgba(40,48,64,0.45)';
+          ctx.fillRect(x, y + GRID - 3, GRID, 3);
+        }
+        if (!at(c - 1, r)) {
+          ctx.fillStyle = 'rgba(255,255,255,0.10)';
+          ctx.fillRect(x, y, 2, GRID);
+        }
+        if (!at(c + 1, r)) {
+          ctx.fillStyle = 'rgba(40,48,64,0.30)';
+          ctx.fillRect(x + GRID - 2, y, 2, GRID);
+        }
+
+        // 노출면에만 외곽선 → 그리드가 아니라 지형 덩어리로 보임
+        ctx.fillStyle = BLOCK_EDGE;
+        if (!at(c, r - 1)) ctx.fillRect(x, y, GRID, 2);
+        if (!at(c, r + 1)) ctx.fillRect(x, y + GRID - 2, GRID, 2);
+        if (!at(c - 1, r)) ctx.fillRect(x, y, 2, GRID);
+        if (!at(c + 1, r)) ctx.fillRect(x + GRID - 2, y, 2, GRID);
       }
     }
+
+    if (this.textures.exists('blocks_layer')) this.textures.remove('blocks_layer');
+    this.textures.addCanvas('blocks_layer', canvas);
+    this.add.image(0, 0, 'blocks_layer').setOrigin(0).setDepth(1);
   }
 
   /** 칸(c,r)에 정상 깃발을 그리고 도달 판정 영역 등록 */
@@ -206,10 +300,34 @@ export class GameScene extends Phaser.Scene {
     this.movingPlatforms.forEach((m) => m.update(delta));
     this.player.update(delta);
     this.dummy.update(delta);
+    this.updateRunDust(delta / 1000);
     this.checkPunchHit();
     this.handleHazards();
     this.checkGoal();
     this.camCtl.update(delta);
+  }
+
+  /** 지상에서 빠르게 달릴 때 발밑 먼지를 주기적으로 흩뿌림 */
+  private updateRunDust(dt: number): void {
+    if (this.player.grounded && Math.abs(this.player.velX) > 100) {
+      this.runDustTimer -= dt;
+      if (this.runDustTimer <= 0) {
+        this.runDustTimer = RUN_DUST_INTERVAL;
+        this.dustParticles.explode(2, this.player.x - this.player.facingDir * 10, this.player.feetY - 2);
+      }
+    } else {
+      this.runDustTimer = 0;
+    }
+  }
+
+  private onPlayerLand(x: number, y: number): void {
+    this.dustParticles.explode(8, x, y - 2);
+    sfx.land();
+  }
+
+  private onPlayerJump(): void {
+    this.dustParticles.explode(5, this.player.x, this.player.feetY - 2);
+    sfx.jump();
   }
 
   /** 깃발에 닿으면 승리 */
@@ -222,6 +340,7 @@ export class GameScene extends Phaser.Scene {
   private win(): void {
     this.won = true;
     this.touchControls.setVisible(false);
+    sfx.win();
     this.camCtl.shake(0.25, 6);
     this.hitParticles.setParticleTint(0xffd24a);
     this.hitParticles.explode(40, this.player.x, this.player.focusY);
@@ -268,6 +387,7 @@ export class GameScene extends Phaser.Scene {
     this.hitParticles.explode(22, this.player.x, this.player.focusY);
     this.player.respawnAt(this.checkpoint.x, this.checkpoint.y);
     this.camCtl.shake(0.18, 6);
+    sfx.respawn();
   }
 
   private checkPunchHit(): void {
@@ -284,6 +404,7 @@ export class GameScene extends Phaser.Scene {
     const mult = Math.min(1 + (this.comboCount - 1) * 0.3, 2.2);
     const decisive = this.comboCount >= 4;
 
+    sfx.hit(Math.min(baseJuice * mult, 1.5) / 1.5);
     this.dummy.knockback(dir, knock.vx * Math.min(mult, 1.8), knock.vy * Math.min(mult, 1.6));
     this.hitParticles.setParticleTint(this.dummy.color);
     this.hitParticles.explode(Math.round((6 + 9 * baseJuice) * Math.min(mult, 2.2)), this.dummy.x, this.dummy.focusY);
