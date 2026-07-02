@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { Player } from '../entities/Player';
-import { Dummy } from '../entities/Dummy';
+import { Enemy } from '../entities/Enemy';
 import { MovingPlatform } from '../entities/MovingPlatform';
 import { CameraController } from '../systems/CameraController';
 import { TouchControls } from '../systems/TouchControls';
@@ -12,6 +12,9 @@ interface Trap { x: number; y: number; w: number; h: number; }
 
 const COMBO_WINDOW = 1.2;
 const PLAT_VIS_H = GRID;
+const BEST_TIME_KEY = 'hop_best_time';
+const HURT_KNOCK_VX = 270;
+const HURT_KNOCK_VY = -230;
 const BLOCK_FILL = '#6f7e93';
 const BLOCK_EDGE = '#39424f';
 const RUN_DUST_INTERVAL = 0.13;
@@ -35,14 +38,17 @@ function whitenTexture(scene: Phaser.Scene, key: string): void {
 export class GameScene extends Phaser.Scene {
   private level!: LevelData;
   private player!: Player;
-  private dummy!: Dummy;
+  private enemies: Enemy[] = [];
   private camCtl!: CameraController;
   private touchControls!: TouchControls;
   private hitParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
   private dustParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
   private playerShadow!: Phaser.GameObjects.Image;
-  private dummyShadow!: Phaser.GameObjects.Image;
   private comboText!: Phaser.GameObjects.Text;
+  private statsText!: Phaser.GameObjects.Text;
+  private lastStats = '';
+  private koCount = 0;
+  private elapsed = 0;   // 클리어 타이머(초) — 승리 시 정지
   private runDustTimer = 0;
   private hitStop = 0;
   private comboCount = 0;
@@ -120,11 +126,6 @@ export class GameScene extends Phaser.Scene {
       () => { if (this.player.attackWith('jab')) sfx.swing(); },
       () => { if (this.player.attackWith('cross')) sfx.swing(); },
     );
-    this.player = new Player(
-      this, spawnX, spawnY, playerSurfaces, this.wWidth, PALETTE[this.colorIndex], this.touchControls,
-    );
-    this.dummy = new Dummy(this, spawnX + 90, spawnY, surfaces, this.wWidth, this.wHeight);
-
     // 캐릭터 그림자 (지면과의 높이차로 크기/농도 변화 → 공중감 표현)
     if (!this.textures.exists('shadow')) {
       const sc = document.createElement('canvas');
@@ -137,14 +138,30 @@ export class GameScene extends Phaser.Scene {
       sctx.fillRect(0, 0, 48, 20);
       this.textures.addCanvas('shadow', sc);
     }
+
+    this.player = new Player(
+      this, spawnX, spawnY, playerSurfaces, this.wWidth, PALETTE[this.colorIndex], this.touchControls,
+    );
     this.playerShadow = this.add.image(spawnX, spawnY, 'shadow').setDepth(8);
-    this.dummyShadow = this.add.image(spawnX + 90, spawnY, 'shadow').setDepth(8);
+
+    // 적 배치 (walk 애니메이션은 Player 생성 시 등록됨)
+    this.koCount = 0;
+    this.elapsed = 0;
+    this.enemies = this.level.enemies.map((e) =>
+      new Enemy(this, e.c * GRID + GRID / 2, e.r * GRID, e.kind, surfaces, this.wWidth, this.wHeight),
+    );
 
     // 콤보 카운터 HUD
     this.comboText = this.add.text(this.scale.width / 2, 34, '', {
       fontSize: '20px', color: '#ffd24a', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(1500).setVisible(false)
       .setStroke('#3c2a0a', 4);
+
+    // 타이머/KO HUD
+    this.statsText = this.add.text(8, 24, '', {
+      fontSize: '12px', color: '#333333', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setScrollFactor(0).setDepth(1000);
+    this.lastStats = '';
 
     // 충돌 파티클
     const g = this.make.graphics({ x: 0, y: 0 });
@@ -218,6 +235,35 @@ export class GameScene extends Phaser.Scene {
     });
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.E).on('down', () => this.scene.start('EditorScene'));
     this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.M).on('down', () => this.scene.start('MenuScene'));
+
+    this.showReadyGo();
+  }
+
+  /** 시작 연출: READY → GO! (조작은 막지 않음) */
+  private showReadyGo(): void {
+    const cx = this.scale.width / 2, cy = this.scale.height / 2 - 30;
+    const ready = this.add.text(cx, cy, 'READY', {
+      fontSize: '30px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(1800).setStroke('#1a1a2e', 6).setScale(0.3);
+    this.tweens.add({
+      targets: ready, scale: 1, duration: 220, ease: 'Back.Out',
+      onComplete: () => this.tweens.add({
+        targets: ready, alpha: 0, delay: 420, duration: 140,
+        onComplete: () => {
+          ready.destroy();
+          const go = this.add.text(cx, cy, 'GO!', {
+            fontSize: '40px', color: '#ffd24a', fontFamily: 'monospace', fontStyle: 'bold',
+          }).setOrigin(0.5).setScrollFactor(0).setDepth(1800).setStroke('#3c2a0a', 7).setScale(0.3);
+          this.tweens.add({
+            targets: go, scale: 1, duration: 200, ease: 'Back.Out',
+            onComplete: () => this.tweens.add({
+              targets: go, alpha: 0, y: cy - 24, delay: 320, duration: 220,
+              onComplete: () => go.destroy(),
+            }),
+          });
+        },
+      }),
+    });
   }
 
   /**
@@ -311,9 +357,11 @@ export class GameScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     this.updateShadow(this.playerShadow, this.player.x, this.player.feetY, this.player.groundYBelow());
-    this.updateShadow(this.dummyShadow, this.dummy.x, this.dummy.feetY, this.dummy.groundYBelow());
 
     if (this.won) { this.camCtl.update(delta); return; }
+
+    this.elapsed += delta / 1000;
+    this.updateStatsHud();
 
     if (this.comboTimer > 0) {
       this.comboTimer -= delta / 1000;
@@ -326,12 +374,70 @@ export class GameScene extends Phaser.Scene {
     }
     this.movingPlatforms.forEach((m) => m.update(delta));
     this.player.update(delta);
-    this.dummy.update(delta);
+    this.enemies.forEach((e) => e.update(delta, this.player.x, this.player.feetY));
     this.updateRunDust(delta / 1000);
     this.checkPunchHit();
+    this.checkEnemyContact();
+    this.consumeDeadEnemies();
     this.handleHazards();
     this.checkGoal();
     this.camCtl.update(delta);
+  }
+
+  private updateStatsHud(): void {
+    const s = `⏱ ${formatTime(this.elapsed)}  ·  KO ${this.koCount}`;
+    if (s !== this.lastStats) {
+      this.lastStats = s;
+      this.statsText.setText(s);
+    }
+  }
+
+  /** 적 몸통에 닿으면 넉백 + 무적 (넉백 비행 중인 적은 무해) */
+  private checkEnemyContact(): void {
+    if (this.player.isInvulnerable) return;
+    const pb = this.player.bounds;
+    for (const e of this.enemies) {
+      if (!e.harmful || !e.overlaps(pb)) continue;
+      const dir = this.player.x >= e.x ? 1 : -1;
+      this.player.applyKnockback(dir * HURT_KNOCK_VX, HURT_KNOCK_VY);
+      this.comboCount = 0;
+      this.comboText.setVisible(false);
+      this.popupText(this.player.x, this.player.focusY - 20, '!', '#ff5a5a');
+      this.hitParticles.setParticleTint(PALETTE[this.colorIndex]);
+      this.hitParticles.explode(10, this.player.x, this.player.focusY);
+      sfx.hit(0.4);
+      this.camCtl.shake(0.12, 5);
+      return;
+    }
+  }
+
+  /** 함정에 닿거나 장외로 나간 적 처리 → KO 카운트 + 연출 */
+  private consumeDeadEnemies(): void {
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const b = e.bounds;
+      for (const t of this.traps) {
+        if (b.x1 < t.x + t.w && b.x2 > t.x && b.y1 < t.y + t.h && b.y2 > t.y) {
+          e.dead = true;
+          break;
+        }
+      }
+    }
+    const dead = this.enemies.filter((e) => e.dead);
+    if (dead.length === 0) return;
+    for (const e of dead) {
+      this.koCount++;
+      this.popupText(
+        Phaser.Math.Clamp(e.x, 20, this.wWidth - 20),
+        Math.min(e.feetY, this.wHeight - 40) - 30,
+        'KO!', '#ffd24a',
+      );
+      this.hitParticles.setParticleTint(e.color);
+      this.hitParticles.explode(18, e.x, e.focusY);
+      sfx.hit(0.9);
+      e.destroy();
+    }
+    this.enemies = this.enemies.filter((e) => !e.dead);
   }
 
   /** 지상에서 빠르게 달릴 때 발밑 먼지를 주기적으로 흩뿌림 */
@@ -388,20 +494,41 @@ export class GameScene extends Phaser.Scene {
   private win(): void {
     this.won = true;
     this.touchControls.setVisible(false);
+    this.statsText.setVisible(false);
+    this.comboText.setVisible(false);
     sfx.win();
     this.camCtl.shake(0.25, 6);
     this.hitParticles.setParticleTint(0xffd24a);
     this.hitParticles.explode(40, this.player.x, this.player.focusY);
 
+    // 최고 기록 (localStorage 영속)
+    let best = Number.POSITIVE_INFINITY;
+    try { best = Number(localStorage.getItem(BEST_TIME_KEY)) || Number.POSITIVE_INFINITY; } catch { /* 무시 */ }
+    const isRecord = this.elapsed < best;
+    if (isRecord) {
+      try { localStorage.setItem(BEST_TIME_KEY, String(this.elapsed)); } catch { /* 무시 */ }
+    }
+    const bestShown = Math.min(best, this.elapsed);
+
     const cx = this.scale.width / 2, cy = this.scale.height / 2;
     this.add.rectangle(cx, cy, this.scale.width, this.scale.height, 0x000000, 0.55)
       .setScrollFactor(0).setDepth(2000);
-    this.add.text(cx, cy - 40, '🏁 정상 도착!', {
+
+    const title = this.add.text(cx, cy - 64, '🏁 정상 도착!', {
       fontSize: '30px', color: '#ffd24a', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(2001).setScale(0.2);
+    this.tweens.add({ targets: title, scale: 1, duration: 350, ease: 'Back.Out' });
+
+    this.add.text(cx, cy - 30,
+      `⏱ ${formatTime(this.elapsed)}   ·   KO ${this.koCount}`, {
+      fontSize: '16px', color: '#ffffff', fontFamily: 'monospace',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
-    this.add.text(cx, cy - 6, '승리!', {
-      fontSize: '18px', color: '#ffffff', fontFamily: 'monospace',
+
+    this.add.text(cx, cy - 8,
+      isRecord ? '✨ 신기록!' : `최고 기록 ${formatTime(bestShown)}`, {
+      fontSize: '13px', color: isRecord ? '#7bffb0' : '#a0b8d0', fontFamily: 'monospace',
     }).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+
     this.winButton(cx, cy + 36, '↻  다시 하기', () => this.scene.restart());
     this.winButton(cx, cy + 66, '≡  메뉴', () => this.scene.start('MenuScene'));
   }
@@ -440,7 +567,9 @@ export class GameScene extends Phaser.Scene {
 
   private checkPunchHit(): void {
     const box = this.player.activeHitbox();
-    if (!box || !this.dummy.overlaps(box)) return;
+    if (!box) return;
+    const target = this.enemies.find((e) => !e.dead && e.overlaps(box));
+    if (!target) return;
 
     const dir = this.player.facingDir;
     const knock = this.player.knockInfo!;
@@ -453,12 +582,12 @@ export class GameScene extends Phaser.Scene {
     const decisive = this.comboCount >= 4;
 
     sfx.hit(Math.min(baseJuice * mult, 1.5) / 1.5);
-    this.dummy.knockback(dir, knock.vx * Math.min(mult, 1.8), knock.vy * Math.min(mult, 1.6));
-    this.hitParticles.setParticleTint(this.dummy.color);
-    this.hitParticles.explode(Math.round((6 + 9 * baseJuice) * Math.min(mult, 2.2)), this.dummy.x, this.dummy.focusY);
+    target.knockback(dir, knock.vx * Math.min(mult, 1.8), knock.vy * Math.min(mult, 1.6));
+    this.hitParticles.setParticleTint(target.color);
+    this.hitParticles.explode(Math.round((6 + 9 * baseJuice) * Math.min(mult, 2.2)), target.x, target.focusY);
 
     const label = decisive ? 'CRUSH!' : this.comboCount >= 2 ? `HIT x${this.comboCount}` : 'HIT';
-    this.popupText(this.dummy.x, this.dummy.focusY - 24, label, decisive ? '#ff5a5a' : '#ffffff');
+    this.popupText(target.x, target.focusY - 24, label, decisive ? '#ff5a5a' : '#ffffff');
 
     if (this.comboCount >= 2) {
       this.comboText.setText(`${this.comboCount} COMBO!`).setVisible(true).setScale(1.4).setAlpha(1);
@@ -473,4 +602,11 @@ export class GameScene extends Phaser.Scene {
       this.camCtl.hitJuice(dir, baseJuice * 0.85);
     }
   }
+}
+
+/** 초 → M:SS.d 표기 */
+function formatTime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec - m * 60;
+  return `${m}:${s < 10 ? '0' : ''}${s.toFixed(1)}`;
 }

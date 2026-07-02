@@ -117,6 +117,8 @@ export class Player {
   private attackTimer = 0;                       // 남은 공격 모션 시간(초)
   private attackHasHit = false;                  // 이번 공격으로 이미 명중했는지
   private squash = 0;                            // 스쿼시&스트레치: +늘어남 / -찌부러짐, 0으로 감쇠
+  private hurtTimer = 0;                         // 피격 경직: 입력이 이동을 못 덮어씀
+  private invulnTimer = 0;                       // 피격 후 무적(깜빡임)
 
   private platforms: Platform[];
   private worldW: number;
@@ -163,6 +165,14 @@ export class Player {
     const maxSpd  = running ? RUN_SPEED : WALK_SPEED;
 
     if (this.attackTimer > 0) this.attackTimer -= dt;
+    if (this.hurtTimer > 0) this.hurtTimer -= dt;
+    if (this.invulnTimer > 0) {
+      this.invulnTimer -= dt;
+      // 무적 동안 깜빡임 (끝나면 원상복구)
+      const a = this.invulnTimer > 0 ? (Math.floor(this.invulnTimer * 12) % 2 ? 0.35 : 0.9) : 1;
+      this.sprite.setAlpha(a);
+      this.outline.forEach((o) => o.setAlpha(a));
+    }
 
     // 움직이는 발판에 실려 이동 (직전 프레임에 올라타 있었다면)
     if (this.onGround && this.ground) {
@@ -172,7 +182,10 @@ export class Player {
 
     // 수평 이동 — 공격 중엔 모멘텀 유지하며 부드럽게 감속(방향 고정, 저속 조향만 허용)
     const dir = goRight && !goLeft ? 1 : goLeft && !goRight ? -1 : 0;
-    if (this.attackTimer > 0 && this.attack) {
+    if (this.hurtTimer > 0) {
+      // 피격 경직: 넉백 모멘텀 유지, 입력 무시
+      this.vx *= Math.exp(-2.5 * dt);
+    } else if (this.attackTimer > 0 && this.attack) {
       const target = dir !== 0 ? dir * this.attack.moveCap : 0;
       this.vx = approach(this.vx, target, ACCEL * dt);
     } else if (dir !== 0) {
@@ -184,7 +197,7 @@ export class Player {
 
     // 점프 입력 → 윈드업 예약 (점프 종류는 입력 순간에 결정, 펀치 중엔 불가)
     const jumpPressed = Phaser.Input.Keyboard.JustDown(this.cursors.space) || (this.touch?.consumeJump() ?? false);
-    if (jumpPressed && this.onGround && this.pendingJump === null && this.attackTimer <= 0) {
+    if (jumpPressed && this.onGround && this.pendingJump === null && this.attackTimer <= 0 && this.hurtTimer <= 0) {
       this.pendingJump = running && Math.abs(this.vx) > 1 ? 'run_jump' : 'jump';
       this.crouchTimer = JUMP_ANTICIPATION;
     }
@@ -391,6 +404,22 @@ export class Player {
   /** 명중 처리 — 이번 공격 동안 추가 명중 방지 */
   markHit(): void { this.attackHasHit = true; }
 
+  // ── 피격 (적 접촉) ──
+
+  /** 적에게 맞아 튕겨남: 잠깐 조작 불능 + 무적 시작 */
+  applyKnockback(vx: number, vy: number): void {
+    this.vx = vx;
+    this.vy = vy;
+    this.onGround = false;
+    this.ground = null;
+    this.hurtTimer = 0.35;
+    this.invulnTimer = 1.1;
+    this.attackTimer = 0;
+    this.pendingJump = null;
+  }
+
+  get isInvulnerable(): boolean { return this.invulnTimer > 0; }
+
   /** 캐릭터 색 변경 (외곽선은 더 진한 동색계열로) */
   setColor(color: number): void {
     this.sprite.setTint(color);
@@ -424,6 +453,8 @@ export class Player {
     this.onGround = false; this.ground = null;
     this.attackTimer = 0; this.pendingJump = null; this.crouchTimer = 0;
     this.squash = 0;
-    this.sprite.setScale(1, 1);
+    this.hurtTimer = 0; this.invulnTimer = 0;
+    this.sprite.setScale(1, 1).setAlpha(1);
+    this.outline.forEach((o) => o.setAlpha(1));
   }
 }
