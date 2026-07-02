@@ -9,6 +9,10 @@ export interface LevelMover {
   mode: MoverMode; range: number; period: number; // range=칸 단위 진폭, period=초
 }
 
+export type EnemyKind = 'patrol' | 'charger';
+/** 적 배치: 발이 r*GRID 높이(=해당 칸 윗면)에 놓임 */
+export interface LevelEnemy { c: number; r: number; kind: EnemyKind; }
+
 export interface LevelData {
   cols: number;
   rows: number;
@@ -17,6 +21,7 @@ export interface LevelData {
   goal: CellPos;         // 정상 깃발 위치(칸)
   traps: CellPos[];      // 가시 함정 칸
   movers: LevelMover[];
+  enemies: LevelEnemy[];
 }
 
 const STORAGE_KEY = 'hop_level_v2';
@@ -56,6 +61,14 @@ export function defaultLevel(): LevelData {
       { c: 12, r: 30, len: 3, mode: 'horizontal', range: 4, period: 3.2 },
       { c: 22, r: 24, len: 3, mode: 'vertical', range: 4, period: 3.6 },
     ],
+    // 계단 중간중간 순찰자, 바닥에 돌진자 하나
+    enemies: [
+      { c: 5, r: rows - 2, kind: 'charger' },
+      { c: 7, r: 38, kind: 'patrol' },
+      { c: 13, r: 32, kind: 'patrol' },
+      { c: 21, r: 24, kind: 'patrol' },
+      { c: 27, r: 18, kind: 'patrol' },
+    ],
   };
 }
 
@@ -80,6 +93,7 @@ function normalize(o: Partial<LevelData> & { goalRow?: number }): LevelData {
     goal: o.goal ?? { c: Math.floor(cols / 2), r: o.goalRow ?? 3 },
     traps: Array.isArray(o.traps) ? o.traps : [],
     movers: Array.isArray(o.movers) ? o.movers : [],
+    enemies: Array.isArray(o.enemies) ? o.enemies : [],
   };
 }
 
@@ -115,6 +129,7 @@ export function encodeLevel(lv: LevelData): string {
     sp: [lv.spawn.c, lv.spawn.r], g: [lv.goal.c, lv.goal.r],
     t: lv.traps.map((t) => [t.c, t.r]),
     m: lv.movers.map((m) => [m.c, m.r, m.len, m.mode === 'horizontal' ? 0 : 1, m.range, m.period]),
+    e: lv.enemies.map((e) => [e.c, e.r, e.kind === 'patrol' ? 0 : 1]),
     s: packSolid(lv.solid),
   };
   return 'HOP1' + btoa(JSON.stringify(obj));
@@ -133,6 +148,10 @@ export function decodeLevel(code: string): LevelData | null {
       traps: o.t.map(([c, r]: number[]) => ({ c, r })),
       movers: o.m.map(([c, r, len, md, range, period]: number[]): LevelMover => ({
         c, r, len, mode: md ? 'vertical' : 'horizontal', range, period,
+      })),
+      // 옛 코드(HOP1 초기 버전)엔 e 필드가 없음 → 적 없는 맵으로 로드
+      enemies: (o.e ?? []).map(([c, r, k]: number[]): LevelEnemy => ({
+        c, r, kind: k ? 'charger' : 'patrol',
       })),
     };
   } catch {

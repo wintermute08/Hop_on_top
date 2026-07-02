@@ -2,18 +2,20 @@ import Phaser from 'phaser';
 import {
   GRID, loadLevel, saveLevel, defaultLevel, worldW, worldH,
   encodeLevel, decodeLevel,
-  type LevelData, type LevelMover,
+  type LevelData, type LevelMover, type EnemyKind,
 } from '../level/LevelData';
 
-type Brush = 'block' | 'trap' | 'moverH' | 'moverV' | 'spawn' | 'goal' | 'erase';
+type Brush = 'block' | 'trap' | 'moverH' | 'moverV' | 'spawn' | 'goal' | 'patrol' | 'charger' | 'erase';
 const BRUSH_KEYS: { key: number; brush: Brush; label: string }[] = [
-  { key: Phaser.Input.Keyboard.KeyCodes.ONE,   brush: 'block',  label: '1 블록' },
-  { key: Phaser.Input.Keyboard.KeyCodes.TWO,   brush: 'trap',   label: '2 함정' },
-  { key: Phaser.Input.Keyboard.KeyCodes.THREE, brush: 'moverH', label: '3 이동(↔)' },
-  { key: Phaser.Input.Keyboard.KeyCodes.FOUR,  brush: 'moverV', label: '4 이동(↕)' },
-  { key: Phaser.Input.Keyboard.KeyCodes.FIVE,  brush: 'spawn',  label: '5 시작' },
-  { key: Phaser.Input.Keyboard.KeyCodes.SIX,   brush: 'goal',   label: '6 정상' },
-  { key: Phaser.Input.Keyboard.KeyCodes.ZERO,  brush: 'erase',  label: '0 지우개' },
+  { key: Phaser.Input.Keyboard.KeyCodes.ONE,   brush: 'block',   label: '1 블록' },
+  { key: Phaser.Input.Keyboard.KeyCodes.TWO,   brush: 'trap',    label: '2 함정' },
+  { key: Phaser.Input.Keyboard.KeyCodes.THREE, brush: 'moverH',  label: '3 이동(↔)' },
+  { key: Phaser.Input.Keyboard.KeyCodes.FOUR,  brush: 'moverV',  label: '4 이동(↕)' },
+  { key: Phaser.Input.Keyboard.KeyCodes.FIVE,  brush: 'spawn',   label: '5 시작' },
+  { key: Phaser.Input.Keyboard.KeyCodes.SIX,   brush: 'goal',    label: '6 정상' },
+  { key: Phaser.Input.Keyboard.KeyCodes.SEVEN, brush: 'patrol',  label: '7 순찰자' },
+  { key: Phaser.Input.Keyboard.KeyCodes.EIGHT, brush: 'charger', label: '8 돌진자' },
+  { key: Phaser.Input.Keyboard.KeyCodes.ZERO,  brush: 'erase',   label: '0 지우개' },
 ];
 
 export class EditorScene extends Phaser.Scene {
@@ -110,6 +112,10 @@ export class EditorScene extends Phaser.Scene {
       case 'goal':
         this.level.goal = { c, r };
         break;
+      case 'patrol':
+      case 'charger':
+        erase ? this.removeEnemy(c, r) : this.addEnemy(c, r, this.brush);
+        break;
       case 'erase':
         this.eraseAny(c, r);
         this.painting = true;
@@ -130,6 +136,7 @@ export class EditorScene extends Phaser.Scene {
     this.setSolid(c, r, false);
     this.removeTrap(c, r);
     this.removeMover(c, r);
+    this.removeEnemy(c, r);
   }
 
   // ── 데이터 조작 ──
@@ -143,6 +150,12 @@ export class EditorScene extends Phaser.Scene {
   }
   private addMover(c: number, r: number, mode: LevelMover['mode']): void {
     this.level.movers.push({ c, r, len: 3, mode, range: 4, period: 3.2 });
+  }
+  private addEnemy(c: number, r: number, kind: EnemyKind): void {
+    if (!this.level.enemies.some((e) => e.c === c && e.r === r)) this.level.enemies.push({ c, r, kind });
+  }
+  private removeEnemy(c: number, r: number): void {
+    this.level.enemies = this.level.enemies.filter((e) => !(e.c === c && e.r === r));
   }
   private removeMover(c: number, r: number): void {
     this.level.movers = this.level.movers.filter(
@@ -210,6 +223,16 @@ export class EditorScene extends Phaser.Scene {
         m.mode === 'horizontal' ? '↔' : '↕',
         { fontSize: '16px', color: '#5a3d10', fontFamily: 'monospace' },
       ).setOrigin(0.5));
+    });
+
+    // 적 (P=순찰자 보라 / C=돌진자 빨강, 발이 칸 윗면에 붙음)
+    this.level.enemies.forEach((e) => {
+      const ex = e.c * GRID + GRID / 2, ey = e.r * GRID;
+      const color = e.kind === 'patrol' ? 0xb08ae0 : 0xe06060;
+      g.fillStyle(color, 1).fillCircle(ex, ey - 12, 10);
+      this.overlay.add(this.add.text(ex, ey - 12, e.kind === 'patrol' ? 'P' : 'C', {
+        fontSize: '11px', color: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+      }).setOrigin(0.5));
     });
 
     // 시작점
