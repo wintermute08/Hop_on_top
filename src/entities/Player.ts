@@ -401,6 +401,17 @@ export class Player {
   // ── 위치 / 리스폰 (체크포인트·함정용) ──
   get x(): number { return this.sprite.x; }
   get feetY(): number { return this.sprite.y; }
+
+  /** 발밑(또는 발과 같은 높이 아래) 가장 가까운 바닥의 y좌표. 없으면 null. 그림자 연출용 */
+  groundYBelow(): number | null {
+    let best: number | null = null;
+    const x = this.sprite.x, y = this.sprite.y;
+    for (const p of this.platforms) {
+      if (x < p.x || x > p.x + p.w) continue;
+      if (p.y >= y - 1 && (best === null || p.y < best)) best = p.y;
+    }
+    return best;
+  }
   get bounds(): Hitbox {
     const cx = this.sprite.x, cy = this.focusY;
     return { x1: cx - 16, x2: cx + 16, y1: cy - 32, y2: cy + 32 };

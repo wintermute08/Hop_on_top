@@ -88,5 +88,17 @@ export class Dummy {
   }
 
   get x(): number { return this.sprite.x; }
+  get feetY(): number { return this.sprite.y; }
   get focusY(): number { return this.sprite.y - BODY_OFFSET; }
+
+  /** 발밑 가장 가까운 바닥의 y좌표. 없으면 null. 그림자 연출용 */
+  groundYBelow(): number | null {
+    let best: number | null = null;
+    const x = this.sprite.x, y = this.sprite.y;
+    for (const p of this.platforms) {
+      if (x < p.x || x > p.x + p.w) continue;
+      if (p.y >= y - 1 && (best === null || p.y < best)) best = p.y;
+    }
+    return best;
+  }
 }

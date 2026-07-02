@@ -40,6 +40,9 @@ export class GameScene extends Phaser.Scene {
   private touchControls!: TouchControls;
   private hitParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
   private dustParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private playerShadow!: Phaser.GameObjects.Image;
+  private dummyShadow!: Phaser.GameObjects.Image;
+  private comboText!: Phaser.GameObjects.Text;
   private runDustTimer = 0;
   private hitStop = 0;
   private comboCount = 0;
@@ -121,6 +124,27 @@ export class GameScene extends Phaser.Scene {
       this, spawnX, spawnY, playerSurfaces, this.wWidth, PALETTE[this.colorIndex], this.touchControls,
     );
     this.dummy = new Dummy(this, spawnX + 90, spawnY, surfaces, this.wWidth, this.wHeight);
+
+    // 캐릭터 그림자 (지면과의 높이차로 크기/농도 변화 → 공중감 표현)
+    if (!this.textures.exists('shadow')) {
+      const sc = document.createElement('canvas');
+      sc.width = 48; sc.height = 20;
+      const sctx = sc.getContext('2d')!;
+      const grad = sctx.createRadialGradient(24, 10, 0, 24, 10, 24);
+      grad.addColorStop(0, 'rgba(0,0,0,0.5)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      sctx.fillStyle = grad;
+      sctx.fillRect(0, 0, 48, 20);
+      this.textures.addCanvas('shadow', sc);
+    }
+    this.playerShadow = this.add.image(spawnX, spawnY, 'shadow').setDepth(8);
+    this.dummyShadow = this.add.image(spawnX + 90, spawnY, 'shadow').setDepth(8);
+
+    // 콤보 카운터 HUD
+    this.comboText = this.add.text(this.scale.width / 2, 34, '', {
+      fontSize: '20px', color: '#ffd24a', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(1500).setVisible(false)
+      .setStroke('#3c2a0a', 4);
 
     // 충돌 파티클
     const g = this.make.graphics({ x: 0, y: 0 });
@@ -286,11 +310,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    this.updateShadow(this.playerShadow, this.player.x, this.player.feetY, this.player.groundYBelow());
+    this.updateShadow(this.dummyShadow, this.dummy.x, this.dummy.feetY, this.dummy.groundYBelow());
+
     if (this.won) { this.camCtl.update(delta); return; }
 
     if (this.comboTimer > 0) {
       this.comboTimer -= delta / 1000;
-      if (this.comboTimer <= 0) this.comboCount = 0;
+      if (this.comboTimer <= 0) { this.comboCount = 0; this.comboText.setVisible(false); }
     }
     if (this.hitStop > 0) {
       this.hitStop -= delta / 1000;
@@ -318,6 +345,27 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.runDustTimer = 0;
     }
+  }
+
+  /** 그림자 위치/크기/농도를 지면과의 높이차에 맞춰 갱신 (없으면 숨김) */
+  private updateShadow(img: Phaser.GameObjects.Image, x: number, feetY: number, groundY: number | null): void {
+    if (groundY === null) { img.setVisible(false); return; }
+    const gap = Math.max(0, groundY - feetY);
+    const scale = Phaser.Math.Clamp(1 - gap / 140, 0.3, 1);
+    const alpha = Phaser.Math.Clamp(0.5 - gap / 200, 0, 0.5);
+    img.setVisible(alpha > 0.02).setPosition(x, groundY - 2).setScale(scale);
+    if (alpha > 0.02) img.setAlpha(alpha);
+  }
+
+  /** 타격 시 떠오르며 사라지는 팝업 텍스트 */
+  private popupText(x: number, y: number, text: string, color: string): void {
+    const t = this.add.text(x, y, text, {
+      fontSize: '14px', color, fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(600).setStroke('#000000', 3);
+    this.tweens.add({
+      targets: t, y: y - 34, alpha: 0, duration: 550, ease: 'Cubic.Out',
+      onComplete: () => t.destroy(),
+    });
   }
 
   private onPlayerLand(x: number, y: number): void {
@@ -408,6 +456,14 @@ export class GameScene extends Phaser.Scene {
     this.dummy.knockback(dir, knock.vx * Math.min(mult, 1.8), knock.vy * Math.min(mult, 1.6));
     this.hitParticles.setParticleTint(this.dummy.color);
     this.hitParticles.explode(Math.round((6 + 9 * baseJuice) * Math.min(mult, 2.2)), this.dummy.x, this.dummy.focusY);
+
+    const label = decisive ? 'CRUSH!' : this.comboCount >= 2 ? `HIT x${this.comboCount}` : 'HIT';
+    this.popupText(this.dummy.x, this.dummy.focusY - 24, label, decisive ? '#ff5a5a' : '#ffffff');
+
+    if (this.comboCount >= 2) {
+      this.comboText.setText(`${this.comboCount} COMBO!`).setVisible(true).setScale(1.4).setAlpha(1);
+      this.tweens.add({ targets: this.comboText, scale: 1, duration: 180, ease: 'Back.Out' });
+    }
 
     if (decisive) {
       this.hitStop = Math.min(0.07 + 0.03 * (this.comboCount - 3), 0.2);
